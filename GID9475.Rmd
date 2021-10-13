@@ -1,0 +1,369 @@
+---
+title: "August 2021 MS Comprehensive Exam"
+author: "GID9475"
+output:
+  pdf_document: default
+---
+
+\newcommand{\bm}{\mathbf}
+\newcommand{\bta}{\boldsymbol{\beta}}
+\newcommand{\ep}{\boldsymbol{\epsilon}}
+  \def\ds{\displaystyle }
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.height=4, fig.width=10)
+options(show.signif.stars = FALSE)
+library(tidyverse)
+library(knitr)
+library(rstanarm)
+library(arm)
+library(lubridate)
+library(rpart)
+library(rpart.plot)
+library(fitdistrplus)
+options(mc.cores = parallel::detectCores())
+```
+
+
+## Part II:
+
+### Question 1
+For this question use the following dataset on Olympic marathon results which contains finishers from the last six Olympic games (1996, 2000, 2004, 2008, 2012, and 2016). The goal is to use a logistic regression model to predict whether a marathon time (in seconds) would result in winning a medal when considering sex of the athlete and temperature on the race day.
+
+
+```{r, include = F}
+marathon <- read_csv('marathon.csv')
+marathon
+```
+
+##### A. Data Visualization. 
+Create one or, a maximum of two, data visualizations to explore the data with respect to understanding factors related to winning a medal. For each figure include meaningful titles, labels, and potentially annotation and also interpret the results with a succinct written summary. 
+
+```{r, message = F, warning = F}
+model = glm(data = marathon, formula = Medal ~ Seconds + Gender + Temp, family = binomial(link = "logit"))
+marathon2 = marathon %>% mutate(preds = predict(model, newdata = marathon, type = "response"), 
+                                lodds = predict(model, newdata = marathon),
+                                Temp_cat = ifelse(Temp >= 90, "90+ degrees F", "70-90 degrees F"),
+                                `Seconds after 2 hrs` = Seconds - 7200,
+                                `Temp above 70 degrees` = Temp - 70,
+                                Gender = factor(Gender, labels = c("Female", "Male")))
+
+ggplot(data = marathon2, aes(y = preds, x = Seconds/60, color = Gender)) + 
+  geom_point() + 
+  geom_smooth(se = F) + 
+  facet_wrap(~Temp_cat) + 
+  xlim(120, 180) + 
+  labs(title = "Probability of medaling in Olympic marathons",
+       y = "Predicted probability",
+       x = "Finishing time (minutes)", 
+       caption = "Probability of medaling with a given time is strongly associated with gender \nand weakly associated with temperature.") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust = 0.5))
+```
+
+The probability of medaling in an Olympic marathon based on a given time is high (above 50% probability) at around 130 minutes for men and around 145 minutes for women when the temperature is 70-90 degrees F, and around 130 minutes for men and 150 minutes for women when the temperature is 90 degrees F or above. Female runners that have a high probability of medaling tend to be around 15-20 minutes slower on average. It appears that there could be an interaction effect between gender and temperature. The women who medaled on the highest temperature days had slower times compared to more moderate temperature days, and men stayed approximately the same at all temperatures.
+
+#### B. Model Specification. 
+Using matrix algebra, write out the full statistical model to address this question. Include any model assumptions. This model should match what you will use in the next question (Part c).
+
+\newpage 
+
+#### C. Model Fitting. 
+Fit the best model to predict winning a medal and include your code in the document. Describe you model choice criteria and defend your final model.
+
+```{r, echo = TRUE, warning = F}
+model = glm(data = marathon2, 
+            formula = Medal ~ `Seconds after 2 hrs` + Gender * `Temp above 70 degrees`, 
+            family = binomial(link = "logit")) # AIC = 111.36
+# model = glm(data = marathon2, 
+# formula = Medal ~ Seconds + Gender + Temp, 
+# family = binomial(link = "logit")) # AIC = 115.22
+summary(model)
+```
+
+A logistic regression model is used to model the log-odds of a participant winning a medal. The included predictors are the time that a participant finished the race (centered at 2 hours), the gender of the participant, the temperature when the race was ran, and an interaction term between the gender and temperature. In exploratory data analysis in part A, there was a difference between how temperature affected men and women in the plot, so two candidate models containing and excluding the interaction term were compared, and the model with the interaction term had a lower AIC compared to the model without.
+
+#### D. Model Summary. 
+Summarize the model fit in Part C using both written summaries and data visualization. If you use a Bayesian procedure, prior distributions should be clearly stated.  
+
+```{r}
+kable(summary(model)$coefficients, digits = 2)
+
+# # Adapted from Dr. Silas Bergen's STAT 405 course notes
+# contrast.vector = c(0, 0, 0, 24, 0) # Effect of 24 degree temp increase for women
+# contrast.vector = c(0, 0, 0, 24, 24) # Effect of 24 degree temp increase for men
+# n <- nrow(model$model)
+# vmat <- vcov(model)
+# betahat <- coef(model)
+# cb <- as.numeric(contrast.vector%*%betahat)
+# se.cb <- as.numeric(sqrt(contrast.vector%*%vmat%*%contrast.vector))
+# cb
+# se.cb
+```
+
+The main predictor to predict if a medal was won is the number of seconds after 2 hours the finishing time. For each 1 second increase after 2 hours, the predicted odds of medal being won decrease by around 2% ($\pm\ 0.3\%$) with all else remaining the same. The gender of the participant also makes a big difference, since female medal winners run on average around 17.6 minutes slower than male medal winners. The predicted effect due to gender was around 13.7 minutes ($\pm\ 2.46\ mins$) worth by itself. There was an effect due to the temperature of around 10 seconds ($\pm\ 3\ seconds$) worth for every 1 degree increase above 70 degrees, but this effect was nearly completely canceled out for the men by the interaction term. It appears that, all else held the same, female runners are strongly affected by increases in temperature and men are affected much less. On a 94 degree F day, the effect due to the high temperatures for male runners is predicted to be around 5 seconds ($\pm\ 73\ seconds$) worth, but for female runners the effect is estimated to be around 241 seconds ($\pm\ 73\ seconds$) worth. 
+
+This effect could be an artifact of the data, because there are no Olympics competitions where women ran in temperatures between 79 and 94 degrees in the data, so there could be an unmeasured extraneous factor on the only day where the female runners ran in the extreme heat. I would be hesitant to make any strong conclusions about the temperature predictor in this analysis. 
+
+#### E. Predictions for 2021. 
+Due to projected high temperatures in Tokyo, the host city of the 2021 Olympic Games, both the men's and women's races were moved 500 miles to Sapparo and the races were started earlier in the morning than previously scheduled. Even so, the daily high temperatures were 93 degrees for the women's race and 90 degrees for the men's race. Using these temperatures, plot the probability of winning a medal for times between 2 hours and 2 3/4 hours (including every minute, so 120 minutes, 121 minutes...) for both male and female competitors.
+
+Consider that the 2021 medal winning times were 02:27:20, 02:27:36, and 02:27:46 for the women's race and 02:08:38, 02:09:58, and 02:10:00 for the men's race.  Discuss your predictions in relation to the actual outcome and discuss whether you have any concerns about extending the results from the past Olympics to 2021 and potential differences due to COVID-19 or other factors.
+
+```{r}
+# Male competition
+dat = tibble(`Seconds after 2 hrs` = rep(seq(from = 0, to = 2700, by = 60), times = 2), 
+           Gender = rep(c("Male", "Female"), each = 46),
+           `Temp above 70 degrees` = rep(c(20, 23), each = 46))
+dat = dat %>% mutate(preds = predict(model, newdata = dat, type = "response"))
+
+ggplot(data = dat, aes(x = `Seconds after 2 hrs`/60 + 120, y = preds)) + 
+  geom_line() +
+  labs(title = "Probability of medaling in marathon for a given finishing time",
+       y = "Probability of medaling",
+       x = "Finishing time (minutes)",
+       subtitle = "Temperature is 90F for men's and 93F for women's marathons",
+       caption = "Women's 2021 Olympics finishing times: 2:27:20, 2:27:36, and 2:27:46\nMens 2021 Olympics finishing times: 2:08:38, 2:09:58, and 2:10:00") +
+  theme(plot.title = element_text(hjust = 0.5), 
+        plot.subtitle = element_text(hjust = 0.5)) +
+  facet_wrap(~Gender)
+
+pred_finishing_times = predict(model, tibble(`Seconds after 2 hrs` = c(518, 598, 600, 1640, 1656, 1666), 
+           Gender = rep(c("Male", "Female"), each = 3),
+           `Temp above 70 degrees` = rep(c(20, 23), each = 3)), type = "response")
+```
+
+Based on this model, the probability that medals were won with the women's 2021 medalists' times are estimated to be 60.2, 64.4, and 70.8 percent, and the men's 2021 medalists' times are estimated to be 66.0, 66.9, and 89.7 percent likely to get a medal. Those seems like reasonably high probabilities that I'm not concerned with the model being obviously not useful. It seems like COVID probably had little to no effect on this race based on the given data - if I suspected COVID had a large effect on finishing times, I would have expected to see competitors medaling with times that have low probability of medaling in pre-COVID competitions. If that were the case, it could be that top competitors weren't able to train as effectively, or weren't able to compete due to COVID. 
+
+If we had data on the year, and we saw a yearly trend of lower times being needed to medal (which is what I would expect to see), that would be better able to answer the question of how COVID affected the times required to likely win the marathon. With the given data, there's no better way to answer that question. 
+
+#### F. Decision Tree. 
+Interpret the classification tree in the figure below and then compare and contrast your results from Parts C, D, and E with the classification tree.
+
+```{r}
+marathon %>% 
+  mutate(Medal_Char = ifelse(Medal,'Medal', "No Medal")) %>% 
+  rpart(Medal_Char ~ Seconds + Gender + Temp, data = ., model = T) %>%
+  rpart.plot()
+```
+
+The first split on 7816 seconds (130 minutes and 16 seconds) indicates that everyone who has ever run a marathon in under that time has medaled. The second split is if a time is between 130:16 and 132:45, there is a 26% chance of a that time winning a medal. The third split indicates that time over 8920 seconds (148:40) has never won a medal, which are just over half of the observations in the data set. The fourth split indicates that a male competitor has never medaled with a time over 132:45. All the remaining observations are female competitors with times under 148:40. The fifth split indicates that 9/10 women who finished under 144:46 have medal. The penultimate split showed that if the temperature is less than 74 degrees F, a time over 148:40 has never won a medal in the women's competition. The last split shows that if the temperature is over 74 degrees, 58% of the times between 144:46 and 147:22 have won a medal in the women's competition, or if between 147:22 and 148:40, 16.7% of the times won a medal if the temperature is over 74 degrees. 
+
+Tree based models have a lot of nested structure that is harder to capture in a linear model. This model is kind of similar to the generalized linear model I used, in that it uses the same predictors and there is an "interaction" between gender and temperature in both. My model explicitly uses an interaction term, and this tree contains that same information by having a split on gender as as the fourth split and temperature as the sixth split. 
+
+The main difference between the models is that the tree model basically separates out the men and women by first splitting out all the male medal winners before capturing any of the female medal winners. I considered doing something similar when I was modeling by fitting two GLM's for the two genders. The differences between the times in male medal winners and female medal winners are so different that it could be a good strategy if you're not interested in measuring the difference between men and women medal winning times. 
+
+It's hard to say which model is better, or if one is better. They're kind of just different - you could use hold out data (like the 2021 Olympic times) to see which classifies better, but that's about all the comparison I know that you could do.
+
+#### G. Additional Thoughts. 
+This dataset does not include additional information that could be useful, such as athlete and year. How would including this information change your model, the assessment of the model assumptions, and/or scope of inference?
+
+I think the year could be a nice predictor for this model, which may capture some of the trend in times lowering over the years that may be missing from the current data set. That would help this model be useful for more than the next couple of Olympic races. 
+
+If information about the athletes, like age, past Olympic history, and nationality were included, a more complicated hierarchical model structure could be used that would incorporate that information and would give potentially better estimates for future competitions. That would also eliminate some concerns about some of the rows containing the same athletes, so they're not completely independent observations from each other.
+
+I pointed out concerns earlier about looking too deeply at the temperature coefficients. More data with different temperatures on race day would be the easiest way to alleviate those concerns. 
+
+### Question 2
+
+Continuing with the Olympic Marathon theme, assume that the distribution for Marathon times for Men's Olympic competitors can be modeled as:
+$$\text{Time} \sim \text{LogNormal}(9.05 + .05 *\text{Scaled Temp}, .06),$$
+
+where the mean and standard deviation are, again, on the log scale and scaled temperature is $\frac{temp - mean(temp)}{sd(temp)}$.
+
+
+
+#### A.
+Simulate a dataset from this model for a range of scaled temperature values (these should roughly be between -2 and 2) and create a data visualization to display the results. Explain and/or document your simulation code.
+
+```{r, echo = T}
+# How large of dataset - seems like the same size as the real data makes sense
+n = nrow(marathon)
+# Temp in the data set appears to be approximately normal 
+# To get values that are mostly between -2 and 2 a SD of 1 makes sense
+# Simulate Times based on the model above
+set.seed(8162021)
+dat2 = tibble(ScTemp = rnorm(n, 0, 1) ,
+              Time = rlnorm(n, 9.05 + 0.05*ScTemp, 0.06))
+
+# Make visualization of Scaled Temp by Time with a loess fit
+ggplot(data = dat2, aes(x = ScTemp, y = Time)) + 
+  geom_point(size = 1) +
+  geom_smooth(formula = y~x, se = F, method = "loess") + 
+  labs(x = "Temperature (scaled)",
+       y = "Finishing time (seconds), simulated",
+       title = "Simulated men's marathon times for different temperatures w/ loess fit",
+       caption = "Loess fit seems to be well approximated by an lm.") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### B.
+
+Using your simulated dataset, fit a standard regression model (using the assumption of normal errors) with marathon time as the response variable and scaled temperature as a predictor. Assess the assumptions of this model and report your results.  Discuss how the results compare to the known simulation values, including an interpretation of the parameter coefficients.
+
+```{r}
+model2 = lm(data = dat2, formula = Time ~ ScTemp)
+summary(model2)
+plot(model2, 2)
+```
+
+This linear model assumes that the observations are distributed iid $Time \sim N(\beta_0 + \beta1_1*Temp, \sigma^2)$. These normality assumptions are violated because I simulated the data from a lognormal distribution, so the residuals are not normally distributed nor will they be homoskedastic. This is shown in the normal q-q plot. 
+
+The normal q-q plot assumes that the residuals are normally distributed and plots the standardized residuals against that assumed normal distribution. The data should follow the trend line if the residuals are normally distributed. In the plot, the residuals tail off at the upper end, indicating that the upper tail are longer in the data than expected by the normal distribution assumption. This would be expected when fitting assumed normal data to a lognormal distribution, since a lognormal distribution has a much longer upper tail than a normal distribution. 
+
+In the standard scale, the estimate for the intercept, $\hat\beta_0 = 8541$, is the estimated marathon time in seconds when the temperature is the mean temperature in the data. The slope parameter, $\hat\beta_1 = 413$, is the estimated change in the marathon times due to a 1 sd increase in temperature (in seconds). If we transform the estimated $\hat\beta_0$ parameter to the log scale like the parameters in the lnorm function, then the estimate of 9.05 matches the parameter used to simulate the data. Unfortunately it's not possible to do that for the $\hat\beta_1$ parameter that estimates the slope due to temperature because the log makes it not an additive relationship (I think?).
+
+\newpage
+
+#### C.
+
+Using your simulated dataset, fit a more appropriate regression model that accounts for the known functional form from the simulation. Assess the assumptions of this model and report your results. Discuss how the results compare to the known simulation values, including an interpretation of the parameter coefficients.
+
+```{r}
+model3 = glm(data = dat2, formula = log(Time) ~ ScTemp, family = gaussian(link = "identity"))
+summary(model3)
+plot(model3, 2)
+```
+
+You could use a SLR model to model the log of the response with respect to the temperature: $log(Time_i) = \beta_0 + \beta_1*Temp + \epsilon_i, \epsilon_i \sim N(0, \sigma^2)$. This has the same assumptions as before, but since the $log(Y) \leq 0$  is undefined, Y values must be greater than 0. The q-q plot above shows the assumption that, after the log transformation, the data are normally distributed. 
+
+By definition, if $Y \sim N(X\beta, \sigma^2),\ then\ log(Y) = X \sim lognormal(X\beta, \sigma^2)$, so taking the log of the Y values should transform into the correct distribution. 
+
+The coefficients can be interpreted as the intercept and slope for the log(Time), and both $\hat\beta_0 = 9.05$ and  $\hat\beta_1 = 0.049$ agree closely with the known simulation values of 9.05 and 0.05. 
+
+\newpage
+
+## Part III:
+
+### Question 1
+
+The Olympic Marathon record of 2:06:32 was set in 2008 by Samuel Wanjiru of Kenya; however, Eliud Kipchoge recently broke the 2 hour barrier in the marathon.
+
+Assume that Men's Olympic Marathon times, in seconds, can be adequately simulated by a log normal distribution (see code below) with (log) mean of 9.05 and (log) sd of .06.
+
+```{r}
+params <- fitdist(marathon %>% filter(Gender == 'M') %>% dplyr::select(Seconds) %>% pull(), "lnorm")
+time <- rlnorm(1, meanlog = params$estimate[1], sdlog = params$estimate[2])
+```
+
+Assume there are 50 competitors in the race. For Parts A-C, use simulation to estimate the desired probability.
+
+#### A. 
+What is the probability of someone breaking the 2 hour barrier?
+
+```{r}
+do_one = function(num_competitors = 50, time = 2*60*60) {
+  samp = rlnorm(num_competitors, meanlog = params$estimate[1], sdlog = params$estimate[2])
+  num_leq_2_hrs = length(which(samp <= time))
+  prop_leq_2_hrs = num_leq_2_hrs/num_competitors
+  return(prop_leq_2_hrs)
+}
+do_many = replicate(100000, do_one())
+mean(do_many)
+```
+
+There is around a 0.4% chance of someone breaking the 2 hour barrier based on the parameters and assuming the distribution models it well. 
+
+#### B. 
+What is the probability of two athletes breaking the 2 hour barrier in the same race?
+
+```{r}
+# Prob of more than 2 athletes
+do_one_2 = function(num_competitors = 50, time = 2*60*60) {
+  samp = rlnorm(num_competitors, meanlog = params$estimate[1], sdlog = params$estimate[2])
+  num_leq_2_hrs = length(which(samp <= time))
+  prop_leq_2_hrs = ifelse(num_leq_2_hrs >= 2 , num_leq_2_hrs/num_competitors, 0)
+  return(prop_leq_2_hrs)
+}
+do_many_2 = replicate(100000, do_one_2())
+mean(do_many_2)
+
+# Prob of exactly 2 athletes
+do_one_3 = function(num_competitors = 50, time = 2*60*60) {
+  samp = rlnorm(num_competitors, meanlog = params$estimate[1], sdlog = params$estimate[2])
+  num_leq_2_hrs = length(which(samp <= time))
+  prop_leq_2_hrs = ifelse(num_leq_2_hrs == 2 , num_leq_2_hrs/num_competitors, 0)
+  return(prop_leq_2_hrs)
+}
+do_many_3 = replicate(100000, do_one_3())
+mean(do_many_3)
+```
+
+The question is unclear if it is asking about exactly two or more than two athletes breaking the 2 hour barrier. There is approximately a 0.08% chance of there being more than two, and around 0.07% chance of exactly two athletes breaking the 2 hour barrier.
+
+#### C. 
+What is the probability of someone breaking the 2 hour barrier in any of the next 10 olympics?
+
+```{r}
+do_one_4 = function(num_competitors = 50, time = 2*60*60) {
+  samp = rlnorm(num_competitors, meanlog = params$estimate[1], sdlog = params$estimate[2])
+  num_leq_2_hrs = length(which(samp <= time))
+  return(num_leq_2_hrs)
+}
+
+do_ten = function(num_years = 10){
+  num_leq_2_hrs_10_yrs= sum(replicate(num_years, do_one_4()))
+  return(ifelse(num_leq_2_hrs_10_yrs > 0, 1, 0))
+}
+
+do_many_ten = replicate(10000, do_ten())
+mean(do_many_ten)
+
+# Probably this works?
+# length(which(replicate(10000, do_one_4(num_competitors = 500)) > 0))/10000
+```
+
+Presumably both of these ways work (independence or something? They give the same answer) but there is approximately an 88% chance of someone breaking the 2 hour barrier in one of the next 10 Olympics. 
+
+### Question 2
+
+The findings in Part II: Question 2 are focused on the expected result, or the conditional mean, from Olympic competitors. However, athletes hoping to win a medal would be more interested in the 1st, 2nd, and 3rd places (or the 1st, 2nd, and 3rd percentiles in this scenario).
+
+Using an OLS framework, the estimate for the regression coefficient vector $\underline{\beta}_{OLS}$ can be calculated as
+
+$$\hat{\underline{\beta}}_{OLS} = \text{argmin}_\beta \sum (y_i - X\beta )^2$$
+
+If rather than the conditional mean, we are interested in the conditional median, then the regression problem can be viewed through the lens of quantile regression, where
+
+$$\hat{\underline{\beta}}_{q=.5} = \text{argmin}_\beta \sum |y_i - X\beta|$$
+
+More generally, quantile regression can be formalized as
+
+$$\hat{\underline{\beta}}_q = \text{argmin}_\beta \sum [(y_i - X \beta) \times (q - I(\{y_i -X \beta\} < 0))],$$
+where $q$ is a quantile ($\in (0,1)$), $I()$ is an indicator function, and the term $(q - I(\{y_i -X \beta\} < 0))$ effectively weights positive and negative residuals.
+
+### A.
+Use the Men's Olympic Marathon times (excluding temperature for now) in the regression model $y = \beta_0 + \epsilon$ to find the the conditional median ($\beta_{0,q = .5}$) and the conditional 1st percentile ($\beta_{0,q = .01}$) 
+
+In addition to presenting your results, write a short paragraph describing your approach.
+
+```{r, echo = T}
+mens_results <- marathon %>% filter(Gender == 'M') %>% dplyr::select(Seconds) %>% pull()
+
+quantreg::rq(formula = mens_results~1, tau = c(0.5, 0.01)) %>% summary(se = "boot")
+```
+
+I considered trying to learn the calculus required to minimize the expression given in the question, or finding someone on the internet that has done that before, but the question doesn't ask us to do that. I'm guessing that in the case where $\beta$ and X are vectors, this math problem simplifies significantly. I found the standard package "quantreg" created by Roger Koenker that does quantile regression. This package algorithmically solves for the $\hat{\underline{\beta}}_q$ that minimizes the weighted sum of absolute residuals. 
+
+Using that package with the rq() function, I found the top 1% of male marathon competitors finish in an estimated $\hat\beta_{0,q = .01} = 7707 \pm 50.7$ seconds, and the median runners finish in  $\hat\beta_{0,q = .5} = 8427 \pm 17.9$ seconds. 
+
+### B.
+
+Write a short paragraph to describe how you would find $\underline{\beta}_q = (\beta_{0,q} , \beta_{1,q})$ for the model $y = \beta_{0} + \beta_{1} \times Temp + \epsilon$.
+ 
+Very easily. I would use the rq() function in the quantreg package and fit a linear model with that, as such:  
+
+```{r, echo = T}
+# Assuming wanting median and 1st percentile times
+marathon %>% 
+  filter(Gender == "M") %>% 
+  dplyr::select(Seconds, Temp) %>% 
+  quantreg::rq(data = ., formula = Seconds ~ Temp, tau = c(0.5, 0.01)) %>% summary(se = "boot")
+```
+
+To be more specific, if I assume I have an analytical solution to $\hat{\underline{\beta_q}}$, it should be reasonably simple to extend it to the case when X is an $n \times 2$ matrix and $\beta$ is a $2 \times 1$ vector. 
+
+The estimated time for Olympic marathon competitors in the 1st percentile is $8217 - 6.45*Tempature$ seconds, which is very interesting because the slope due to the temperature is negative, implying that the top 1% of runners actually run faster when it's warmer out based on these data. For median Olympic competitors, the estimated time is $7986 + 5.40*Temperature$, so the average competitor slows down when the temperature is higher. For both the 1st and 50th percentile Olympic competitors, the effect on finishing time due to the temperature is is not large compared to the estimated standard error.
+
+\newpage
+
